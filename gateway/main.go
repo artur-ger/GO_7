@@ -5,29 +5,37 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
+
+	"gateway/internal/api"
+	"ledger"
 )
 
-func pingHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, "pong")
-}
-
 func main() {
-	http.HandleFunc("/ping", pingHandler)
+	if err := ledger.InitDB(); err != nil {
+		fmt.Println("ошибка подключения к БД:", err)
+		os.Exit(1)
+	}
+	defer ledger.Close()
+
+	if err := ledger.InitCache(); err != nil {
+		fmt.Println("ошибка подключения к Redis:", err)
+		os.Exit(1)
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	addr := ":" + port
-	log.Printf("Gateway service started on %s", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	server := &http.Server{
+		Addr:              ":" + port,
+		Handler:           api.Logging(api.NewRouter()),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	log.Printf("Gateway запущен на :%s (данные Ledger в PostgreSQL, отчёты в Redis)", port)
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -1,5 +1,7 @@
 *.exe
 *.test
 *.out
-
+.idea/
+.vscode/
+*.env
 TZ.md
