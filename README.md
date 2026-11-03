@@ -1,76 +1,42 @@
-# Домашнее задание 3: бюджеты в Ledger
+# Домашнее задание 7: базы данных (PostgreSQL + Redis)
 
-В репозитории два независимых Go-модуля:
+В репозитории два Go-модуля:
 
-- `gateway` — HTTP-шлюз, отвечает `pong` на `GET /ping`;
-- `ledger` — сервис транзакций с бюджетами по категориям.
+- `ledger` — бизнес-логика, PostgreSQL (бюджеты/транзакции) и Redis (кеш отчётов);
+- `gateway` — HTTP API (`/api/budgets`, `/api/transactions`, `/api/reports/summary`).
 
-Требуется Go 1.22 или новее.
+Gateway обращается к тем же HTTP-эндпоинтам, что и раньше, но Ledger хранит данные
+в PostgreSQL, а отчёты кешируются в Redis на короткий TTL.
 
-## Запуск Gateway
+Требуется Go 1.22+, PostgreSQL, Redis, утилита [goose](https://github.com/pressly/goose).
 
-```bash
-cd gateway
-go run .
-```
-
-Сервер запускается на порту 8080. Проверка:
-
-```bash
-curl http://localhost:8080/ping
-```
-
-Ожидаемый ответ: `pong`. Можно также открыть http://localhost:8080/ping в браузере.
-
-Если порт 8080 занят, порт можно задать через переменную окружения `PORT`:
+## Быстрый старт
 
 ```powershell
-$env:PORT = "8081"; go run .
-```
+# 1. Инфраструктура
+docker run -d --name cashcraft-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=cashapp -p 5432:5432 postgres:16-alpine
+docker run -d --name cashcraft-redis -p 6379:6379 redis:7-alpine
 
-## Запуск Ledger
+# 2. Миграции
+go install github.com/pressly/goose/v3/cmd/goose@latest
+$env:DATABASE_URL = "postgres://postgres:postgres@localhost:5432/cashapp?sslmode=disable"
+goose -dir ./ledger/migrations postgres $env:DATABASE_URL up
 
-Команду нужно выполнять из каталога `ledger`, чтобы открылся файл `budgets.json`.
-
-```bash
+# 3. Ledger (проверка подключения и демо-отчёта)
 cd ledger
+$env:REDIS_ADDR = "localhost:6379"
+go run ./cmd
+
+# 4. Gateway
+cd ../gateway
 go run .
 ```
 
-Сервис:
+Подробности: [ledger/README.md](ledger/README.md), [gateway/README.md](gateway/README.md).
 
-- хранит бюджеты в `map[string]Budget` (категория, лимит, период);
-- задаёт стартовые лимиты через `SetBudget`;
-- читает `budgets.json` функцией `LoadBudgets` (`os.Open` и `bufio.NewReader`);
-- в `AddTransaction` не сохраняет транзакцию, если сумма по категории станет больше лимита, и возвращает ошибку `budget exceeded`.
+## Что сделано
 
-Ожидаемый вывод:
-
-```
-Ledger service started
-Бюджеты:
-  еда: лимит 5000.00 (месяц)
-  транспорт: лимит 2000.00 (месяц)
-Добавлена транзакция #1: еда 1200.00
-Ошибка добавления транзакции "ужин в ресторане": budget exceeded: category "еда", limit 5000.00, total 5200.00
-Добавлена транзакция #2: транспорт 2000.00
-Ошибка добавления транзакции "Некорректная транзакция": amount must not be zero
-Список транзакций:
-  #1 | 2026-10-05 | еда          |  1200.00 | продукты
-  #2 | 2026-10-05 | транспорт    |  2000.00 | метро
-```
-
-Транзакция «ужин в ресторане» (4000 при уже потраченных 1200 и лимите 5000) в список не попадает. Транзакция «метро» на 2000 равна лимиту и сохраняется.
-
-Если `budgets.json` не открывается, пуст или содержит неверный JSON, программа печатает ошибку и завершается с кодом 1.
-
-### Формат budgets.json
-
-JSON-массив объектов:
-
-```json
-[
-  {"category": "еда", "limit": 5000, "period": "месяц"},
-  {"category": "транспорт", "limit": 2000, "period": "месяц"}
-]
-```
+- схема `budgets` / `expenses`, миграции Goose (up/down);
+- `sql.Open("pgx", …)` + `Ping`, пул `SetMaxOpenConns(10)` / `SetMaxIdleConns(5)`;
+- CRUD в БД: `SetBudget` (UPSERT), `ListBudgets`, `AddTransaction` (проверка лимита → `budget exceeded`), `ListTransactions`;
+- Redis: `GetReportSummary` с ключом `report:summary:<from>:<to>` и TTL 30с; опционально кеш `budgets:all`.
