@@ -1,9 +1,8 @@
 # Gateway
 
-Эндпоинты те же, что раньше, но Ledger хранит данные в PostgreSQL.
-`GET /api/reports/summary` кешируется в Redis (TTL 30с).
+HTTP-шлюз на `:8080`. Бизнес-логика и хранение в пакете `ledger` (Postgres + Redis).
 
-Сначала поднимите PostgreSQL/Redis и примените миграции — см. [../ledger/README.md](../ledger/README.md).
+Сначала подними БД и Redis, прогони миграции: [../ledger/README.md](../ledger/README.md).
 
 ## Запуск
 
@@ -13,38 +12,44 @@ $env:REDIS_ADDR = "localhost:6379"
 go run .
 ```
 
-## Проверка через cURL
+## Примеры запросов
 
-```bash
-curl -X POST http://localhost:8080/api/budgets ^
-  -H "Content-Type: application/json" ^
-  -d "{\"category\":\"еда\",\"limit\":1000}"
+Бюджет:
+
+```powershell
+curl.exe -X POST http://localhost:8080/api/budgets `
+  -H "Content-Type: application/json" `
+  -d "{\"category\":\"food\",\"limit\":1000}"
 ```
 
-```bash
-curl -X POST http://localhost:8080/api/transactions ^
-  -H "Content-Type: application/json" ^
-  -d "{\"amount\":450,\"category\":\"еда\",\"description\":\"обед\",\"date\":\"2026-11-01\"}"
+Транзакция в пределах лимита (ожидаем 201):
+
+```powershell
+curl.exe -X POST http://localhost:8080/api/transactions `
+  -H "Content-Type: application/json" `
+  -d "{\"amount\":450,\"category\":\"food\",\"description\":\"lunch\",\"date\":\"2026-11-01\"}"
 ```
 
-Сумма 700 при лимите 1000 и уже потраченных 450 → **409**:
+Превышение лимита (ожидаем 409, в `expenses` записи нет):
 
-```bash
-curl -X POST http://localhost:8080/api/transactions ^
-  -H "Content-Type: application/json" ^
-  -d "{\"amount\":700,\"category\":\"еда\",\"description\":\"ужин\",\"date\":\"2026-11-02\"}"
+```powershell
+curl.exe -X POST http://localhost:8080/api/transactions `
+  -H "Content-Type: application/json" `
+  -d "{\"amount\":700,\"category\":\"food\",\"description\":\"dinner\",\"date\":\"2026-11-02\"}"
 ```
 
-```bash
-curl http://localhost:8080/api/transactions
-curl http://localhost:8080/api/budgets
+Списки:
+
+```powershell
+curl.exe http://localhost:8080/api/budgets
+curl.exe http://localhost:8080/api/transactions
 ```
 
-Отчёт дважды подряд — в логах `cache miss`, затем `cache hit`:
+Отчёт два раза подряд. В логах Gateway: `cache miss`, затем `cache hit`:
 
-```bash
-curl "http://localhost:8080/api/reports/summary?from=2026-11-01&to=2026-11-30"
-curl "http://localhost:8080/api/reports/summary?from=2026-11-01&to=2026-11-30"
+```powershell
+curl.exe "http://localhost:8080/api/reports/summary?from=2026-11-01&to=2026-11-30"
+curl.exe "http://localhost:8080/api/reports/summary?from=2026-11-01&to=2026-11-30"
 ```
 
 После перезапуска Gateway данные остаются в PostgreSQL.
